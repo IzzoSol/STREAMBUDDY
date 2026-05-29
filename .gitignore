@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+data/
+*.db
+server_out.log
+server_err.log
+check_key.py
+test_api.py
+.venv/
+venv/

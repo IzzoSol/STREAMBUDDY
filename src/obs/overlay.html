@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STREAMBUDDY - Game Help Overlay</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+  :root {
+    --bg: rgba(0, 0, 0, 0.75);
+    --surface: rgba(15, 15, 30, 0.85);
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --text: #e0e0e0;
+    --text2: #94a3b8;
+    --border: rgba(42, 42, 74, 0.6);
+    --success: #22c55e;
+    --danger: #ef4444;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: transparent;
+    color: var(--text);
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  #app {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 400px;
+    max-height: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .help-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    backdrop-filter: blur(12px);
+    animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    max-height: 250px;
+    overflow-y: auto;
+  }
+
+  .help-card .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text2);
+  }
+
+  .help-card .header .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: pulse 2s infinite;
+  }
+
+  .help-card .header .game-tag {
+    background: var(--accent2);
+    color: white;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .help-card .question {
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .help-card .answer {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+
+  .help-card .answer ul, .help-card .answer ol {
+    margin-left: 16px;
+    margin-top: 4px;
+  }
+
+  .help-card .answer li {
+    margin-bottom: 2px;
+  }
+
+  .help-card .answer strong {
+    color: var(--accent);
+  }
+
+  .help-card .answer a {
+    color: var(--accent2);
+    text-decoration: none;
+  }
+
+  .help-card .meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--text2);
+  }
+
+  .help-card .meta .chatter {
+    color: var(--accent2);
+  }
+
+  .chat-widget {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    backdrop-filter: blur(12px);
+    animation: slideIn 0.3s ease;
+  }
+
+  .chat-widget .msg {
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 2px 0;
+  }
+
+  .chat-widget .msg .name {
+    color: var(--accent2);
+    font-weight: 600;
+  }
+
+  .chat-widget .msg .text {
+    color: var(--text);
+  }
+
+  .typing {
+    display: inline-flex;
+    gap: 3px;
+    padding: 4px 0;
+  }
+
+  .typing span {
+    width: 5px;
+    height: 5px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: bounce 1.4s infinite;
+  }
+
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes bounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-6px); }
+  }
+
+  .status-bar {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px 4px 8px;
+    font-size: 11px;
+    backdrop-filter: blur(8px);
+  }
+
+  .status-bar .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  .status-bar .dot.live { background: var(--danger); }
+  .status-bar .dot.idle { background: var(--text2); }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="status-bar" id="statusBar">
+  <span class="dot idle" id="statusDot"></span>
+  <span id="statusText">Connecting...</span>
+</div>
+
+<div id="app">
+  <div class="chat-widget" id="chatMessages">
+    <div class="typing" id="waitingMsg">
+      <span></span><span></span><span></span>
+      <span style="margin-left:6px;color:var(--text2);font-size:11px">Waiting for questions...</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  const WS_URL = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host + '/api/v1/ws/obs-overlay';
+  let ws = null;
+  let reconnectTimer = null;
+
+  function connect() {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      setStatus('Live', 'live');
+      ws.send(JSON.stringify({ type: 'set_game', game: document.title || 'streaming' }));
+    };
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleMessage(data);
+    };
+    ws.onclose = () => {
+      setStatus('Disconnected', 'idle');
+      reconnectTimer = setTimeout(connect, 3000);
+    };
+    ws.onerror = () => { ws.close(); };
+  }
+
+  function setStatus(text, cls) {
+    document.getElementById('statusText').textContent = text;
+    document.getElementById('statusDot').className = 'dot ' + cls;
+  }
+
+  function handleMessage(data) {
+    switch (data.type) {
+      case 'result':
+      case 'voice_result':
+        showHelpCard(data);
+        break;
+    }
+  }
+
+  function showHelpCard(data) {
+    const app = document.getElementById('app');
+    const card = document.createElement('div');
+    card.className = 'help-card';
+
+    const chatter = data.chatter || 'Viewer';
+    card.innerHTML = `
+      <div class="header">
+        <span class="dot"></span>
+        <span>STREAMBUDDY</span>
+        <span class="game-tag">${data.game || 'unknown'}</span>
+      </div>
+      <div class="question">${escapeHtml(data.query || '')}</div>
+      <div class="answer">${formatAnswer(data.answer || '')}</div>
+      <div class="meta">
+        <span class="chatter">${escapeHtml(chatter)}</span>
+        <span>${(data.processing_time_ms / 1000).toFixed(1)}s</span>
+      </div>
+    `;
+
+    app.prepend(card);
+    setTimeout(() => {
+      card.style.transition = 'opacity 0.5s, transform 0.5s';
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(40px)';
+      setTimeout(() => card.remove(), 500);
+    }, 30000);
+
+    const waiting = document.getElementById('waitingMsg');
+    if (waiting) waiting.remove();
+  }
+
+  function formatAnswer(text) {
+    if (!text) return '';
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+      .replace(/\n/g, '<br>')
+      .replace(/^- (.*)/gm, '<li>$1</li>')
+      .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+  }
+
+  function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  connect();
+</script>
+</body>
+</html>
