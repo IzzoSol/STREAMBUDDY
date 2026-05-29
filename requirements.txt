@@ -15,4 +15,6 @@ lxml>=5.2.0
 asyncpraw>=7.7.0
 aiosqlite
 python-dotenv>=1.0.0
+discord.py>=2.4.0
+google-api-python-client>=2.120.0
 # whisper on-demand only: pip install openai-whisper

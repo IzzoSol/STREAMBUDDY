@@ -13,27 +13,114 @@ from src.web import WebSearch, RedditScraper, WikiScraper
 logger = logging.getLogger(__name__)
 
 KNOWN_GAMES = [
-    "elden ring", "dark souls", "dark souls 2", "dark souls 3", "sekiro", "bloodborne",
-    "demon's souls", "lies of p", "hollow knight", "zelda", "breath of the wild",
-    "tears of the kingdom", "skyrim", "oblivion", "fallout", "fallout 4",
-    "call of duty", "warzone", "fortnite", "minecraft", "terraria",
-    "league of legends", "valorant", "csgo", "counter strike", "dota 2",
-    "overwatch", "apex legends", "pubg", "rocket league", "grand theft auto",
-    "gta", "red dead redemption", "rdr2", "witcher 3", "cyberpunk 2077",
-    "god of war", "spider-man", "horizon", "final fantasy", "ff7",
-    "baldur's gate 3", "baldurs gate 3", "bg3", "divinity", "world of warcraft", "wow",
-    "diablo", "path of exile", "poe", "stardew valley", "factorio",
-    "satisfactory", "subnautica", "resident evil", "silent hill",
-    "dead by daylight", "dbd", "monster hunter", "mario", "pokemon",
-    "starfield", "mass effect", "bioshock", "doom", "half-life",
-    "portal", "destiny 2", "warframe", "rainbow six", "siege",
+    # FromSoftware / Souls-like
+    "elden ring", "dark souls", "dark souls 2", "dark souls 3", "sekiro",
+    "bloodborne", "demon's souls", "lies of p", "hollow knight",
+    "mortal shell", "the surge", "remnant", "nioh", "nioh 2", "wo long",
+    "star wars jedi fallen order", "star wars jedi survivor", "ashen",
+    "code vein", "lords of the fallen", "steelrising", "thymesia",
+    # Rockstar / Open World
+    "grand theft auto", "gta", "gta 5", "gta v", "gta online", "red dead redemption",
+    "rdr2", "red dead redemption 2", "bully", "max payne", "la noire",
+    # Bethesda
+    "skyrim", "oblivion", "morrowind", "daggerfall", "fallout", "fallout 2",
+    "fallout 3", "fallout new vegas", "fallout 4", "fallout 76",
+    "starfield", "the elder scrolls online",
+    # Nintendo
+    "zelda", "breath of the wild", "tears of the kingdom", "ocarina of time",
+    "majora's mask", "twilight princess", "wind waker", "mario", "super mario",
+    "mario odyssey", "mario kart", "smash bros", "pokemon", "pokemon go",
+    "pokemon scarlet", "pokemon violet", "metroid", "fire emblem",
+    "splatoon", "animal crossing", "xenoblade", "kirby", "donkey kong",
+    # CD Projekt
+    "witcher 3", "witcher", "cyberpunk 2077", "cyberpunk",
+    # Sony / PlayStation
+    "god of war", "god of war ragnarok", "spider-man", "spider-man 2",
+    "horizon zero dawn", "horizon forbidden west", "the last of us",
+    "uncharted", "ghost of tsushima", "days gone", "ratchet and clank",
+    "returnal", "demons souls remake", "bloodborne",
+    # Final Fantasy / JRPG
+    "final fantasy", "ff7", "ff7 remake", "ff14", "ff16", "ff15", "ff10",
+    "chrono trigger", "dragon quest", "kingdom hearts", "persona", "persona 5",
+    "nier", "nier automata", "tales of", "star ocean",
+    # Western RPG
+    "baldur's gate 3", "baldurs gate 3", "bg3", "divinity", "divinity original sin",
+    "mass effect", "dragon age", "kingdom come", "kotor", "pillars of eternity",
+    "pathfinder", "disco elysium", "wasteland", "outer worlds",
+    # MMO / Online
+    "world of warcraft", "wow", "final fantasy 14", "ff14", "guild wars 2",
+    "elder scrolls online", "eso", "destiny 2", "warframe", "path of exile", "poe",
+    "lost ark", "albion", "runescape", "osrs", "new world",
+    # MOBA / Battle Royale
+    "league of legends", "valorant", "dota 2", "heroes of the storm",
+    "fortnite", "pubg", "apex legends", "warzone", "call of duty warzone",
+    "overwatch", "overwatch 2", "smite", "rainbow six siege", "siege",
+    # FPS / Shooter
+    "call of duty", "call of duty black ops", "call of duty modern warfare",
+    "battlefield", "halo", "doom", "doom eternal", "half-life", "portal",
+    "counter strike", "csgo", "cs2", "team fortress 2", "titanfall",
+    "far cry", "crysis", "metro", "bioshock",
+    # Survival / Crafting
+    "minecraft", "terraria", "stardew valley", "subnautica", "the forest",
+    "sons of the forest", "ark survival", "rust", "valheim", "project zomboid",
+    "7 days to die", "green hell", "stranded deep",
+    # Factory / Automation
+    "factorio", "satisfactory", "dyson sphere program", "shapez",
+    "captain of industry", "mindustry",
+    # Horror
+    "resident evil", "silent hill", "dead space", "alan wake", "outlast",
+    "amnesia", "alien isolation", "evil within", "until dawn", "darkwood",
+    "signalis", "tormented souls",
+    # Action / Hack and Slash
+    "devil may cry", "bayonetta", "metal gear", "mg rising", "ninja gaiden",
+    "dying light", "dead island", "left 4 dead", "back 4 blood",
+    "warhammer 40k space marine", "shadow of war", "shadow of mordor",
+    # Racing
+    "forza horizon", "forza motorsport", "gran turismo", "need for speed",
+    "assetto corsa", "iracing", "dirt rally", "f1",
+    # Sports
+    "fifa", "ea sports fc", "madden", "nba 2k", "mlb the show", "wwe",
+    "football manager", "pga tour",
+    # Strategy
+    "civilization", "civ 6", "age of empires", "starcraft", "total war",
+    "xcom", "crusader kings", "europa universalis", "stellaris",
+    "rimworld", "frostpunk", "they are billions", "against the storm",
+    # Indie
+    "hades", "hollow knight", "celeste", "dead cells", "slay the spire",
+    "binding of isaac", "enter the gungeon", "risk of rain 2",
+    "vampire survivors", "balatro", "stray", "outer wilds", "undertale",
+    "cuphead", "shovel knight", "hotline miami", "katana zero",
+    "disco elysium", "inscryption", "tunic", "return of the obra dinn",
+    # Fighting
+    "street fighter", "mortal kombat", "tekken", "guilty gear",
+    "dragon ball fighterz", "super smash bros",
+    # MMORPG
+    "world of warcraft", "wow", "final fantasy 14", "ff14", "black desert",
+    "guild wars 2", "eso", "runescape", "oldschool runescape",
+    "maple story", "maplestory",
 ]
 
 BOSS_KEYWORDS = [
+    # Elden Ring
     "malenia", "radahn", "godrick", "margit", "mohg", "maliketh",
     "godfrey", "hoarah loux", "rennala", "rykard", "fire giant",
+    "tree sentinel", "astel", "mimic tear", "malformed star",
+    # Dark Souls
     "midir", "nameless king", "sister friede", "orphan of kos",
+    "artorias", "manus", "kalameet", "pontiff sulyvahn",
+    "aldrich", "abyss watchers", "dancer", "twin princes",
+    "soul of cinder", "gael", "champion gundyr",
+    # Bloodborne
+    "father gascoigne", "amygdala", "micolash", "gehrman",
+    "moon presence", "ludwig", "laurence", "living failures",
+    "lady maria", "kos orphan", "ebrietas", "martyr logarius",
+    # Sekiro
     "isshin", "genichiro", "owl father", "demon of hatred",
+    "lady butterfly", "guardian ape", "corrupted monk",
+    "true monk", "divine dragon",
+    # Other
+    "omega weapon", "sephiroth", "safer sephiroth", "ultima weapon",
+    "emerald weapon", "ruby weapon", "diamond weapon",
 ]
 
 

@@ -698,3 +698,45 @@ async def start_twitch(
 @router.post("/twitch/stop")
 async def stop_twitch():
     return {"status": "stopped"}
+
+
+@router.post("/youtube/start")
+async def start_youtube(
+    video_id: str = Form(...),
+    session_id: str = Form("default"),
+):
+    from src.youtube.integration import YouTubeStreamIntegration
+
+    yt = YouTubeStreamIntegration(api_key=config.youtube.api_key)
+    yt.orch = _get_orchestrator(session_id)
+    asyncio.create_task(yt.monitor_chat(video_id))
+    return {"status": "started", "video_id": video_id, "session_id": session_id}
+
+
+@router.post("/discord/start")
+async def start_discord(session_id: str = Form("default")):
+    from src.discord_bot.bot import DiscordBotIntegration
+
+    bot = DiscordBotIntegration(token=config.discord.token)
+    bot.orch = _get_orchestrator(session_id)
+    asyncio.create_task(bot.start())
+    return {"status": "started", "session_id": session_id}
+
+
+@router.get("/platforms")
+async def get_platforms():
+    return {
+        "twitch": {
+            "enabled": config.twitch.enabled,
+            "channel": config.twitch.channel or "",
+        },
+        "youtube": {
+            "enabled": config.youtube.enabled,
+        },
+        "discord": {
+            "enabled": config.discord.enabled,
+        },
+        "obs_overlay": {
+            "url": "/obs/overlay",
+        },
+    }

@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable
 
 import aiohttp
 
@@ -22,13 +22,15 @@ class TwitchStreamIntegration:
         self._running = False
         self._channel = ""
         self._session: Optional[aiohttp.ClientSession] = None
+        self._reconnect_attempts = 0
+        self._max_reconnect = 10
 
     async def _ensure_session(self):
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
 
     async def _get_app_token(self) -> str:
-        if self.access_token and datetime.utcnow().timestamp() < self.token_expires_at:
+        if self.access_token and datetime.utcnow().timestamp() < self.token_expires_at - 60:
             return self.access_token
 
         await self._ensure_session()
@@ -43,6 +45,7 @@ class TwitchStreamIntegration:
             data = await resp.json()
             self.access_token = data["access_token"]
             self.token_expires_at = datetime.utcnow().timestamp() + data.get("expires_in", 3600)
+            self._reconnect_attempts = 0
             return self.access_token
 
     async def _api_call(self, endpoint: str, params: dict = None) -> dict:
@@ -55,58 +58,72 @@ class TwitchStreamIntegration:
         }
 
         async with self._session.get(url, headers=headers, params=params or {}) as resp:
-            return await resp.json()
+            data = await resp.json()
+            if "error" in data and data.get("status") == 401:
+                self.access_token = ""
+                token = await self._get_app_token()
+                headers["Authorization"] = f"Bearer {token}"
+                async with self._session.get(url, headers=headers, params=params or {}) as retry:
+                    return await retry.json()
+            return data
 
-    async def get_channel_info(self, channel_name: str) -> dict:
-        data = await self._api_call("search/channels", {"query": channel_name, "first": 1})
-        channels = data.get("data", [])
-        return channels[0] if channels else {}
+    async def get_user_id(self, username: str) -> str:
+        data = await self._api_call("users", {"login": username})
+        users = data.get("data", [])
+        return users[0]["id"] if users else ""
 
     async def get_stream_info(self, channel_name: str) -> dict:
         data = await self._api_call("streams", {"user_login": channel_name})
         streams = data.get("data", [])
         return streams[0] if streams else {}
 
-    async def get_game_info(self, game_id: str) -> dict:
-        data = await self._api_call("games", {"id": game_id})
-        games = data.get("data", [])
-        return games[0] if games else {}
-
-    async def get_channel_chatters(self, channel_name: str, moderator_id: str = "") -> list[str]:
-        data = await self._api_call("chat/chatters", {
-            "broadcaster_id": moderator_id or channel_name,
-            "moderator_id": moderator_id or channel_name,
-        })
-        chatters = data.get("data", [])
-        return [c.get("user_login", "") for c in chatters]
-
-    async def monitor_chat(self, channel: str, callback=None):
+    async def monitor_chat(self, channel: str, callback: Optional[Callable] = None):
         self._channel = channel
         self._running = True
-        logger.info(f"Starting Twitch chat monitor for #{channel}")
-
-        info = await self.get_channel_info(channel)
-        game_name = info.get("game_name", "unknown")
-        self.orch.current_game = game_name
+        self._reconnect_attempts = 0
+        logger.info(f"Starting Twitch monitor for #{channel}")
 
         await self._ensure_session()
         ws_url = "wss://eventsub.wss.twitch.tv/ws"
-        async with self._session.ws_connect(ws_url) as ws:
-            welcome = await ws.receive_json()
-            session_id = welcome.get("payload", {}).get("session", {}).get("id", "")
 
-            stream_info = await self.get_channel_info(channel)
-            broadcaster_id = stream_info.get("id", "")
+        while self._running and self._reconnect_attempts < self._max_reconnect:
+            try:
+                async with self._session.ws_connect(ws_url) as ws:
+                    logger.info(f"Twitch WS connected for #{channel}")
+                    self._reconnect_attempts = 0
 
-            if broadcaster_id:
-                await self._subscribe_event(session_id, "channel.chat.message", broadcaster_id)
+                    welcome = await ws.receive_json()
+                    session_id = welcome.get("payload", {}).get("session", {}).get("id", "")
 
-            async for msg in ws:
-                if not self._running:
-                    break
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    await self._handle_event(data, callback)
+                    broadcaster_id = await self.get_user_id(channel)
+                    if broadcaster_id:
+                        await self._subscribe_event(session_id, "channel.chat.message", broadcaster_id)
+                        await self._subscribe_event(session_id, "channel.follow", broadcaster_id)
+                        await self._subscribe_event(session_id, "channel.subscribe", broadcaster_id)
+
+                    async for msg in ws:
+                        if not self._running:
+                            break
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            await self._handle_event(data, callback)
+                        elif msg.type == aiohttp.WSMsgType.CLOSED:
+                            logger.warning("Twitch WS closed unexpectedly")
+                            break
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            logger.error(f"Twitch WS error: {ws.exception()}")
+                            break
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self._reconnect_attempts += 1
+                wait = min(2 ** self._reconnect_attempts, 60)
+                logger.warning(f"Twitch disconnected (attempt {self._reconnect_attempts}/{self._max_reconnect}), reconnecting in {wait}s: {e}")
+                await asyncio.sleep(wait)
+
+        if self._reconnect_attempts >= self._max_reconnect:
+            logger.error("Twitch max reconnect attempts reached")
 
     async def _subscribe_event(self, session_id: str, event_type: str, broadcaster_id: str):
         await self._ensure_session()
@@ -124,9 +141,14 @@ class TwitchStreamIntegration:
             "transport": {"method": "websocket", "session_id": session_id},
         }
         async with self._session.post(url, headers=headers, json=body) as resp:
-            return await resp.json()
+            result = await resp.json()
+            if resp.status == 409:
+                logger.info(f"Subscription {event_type} already exists")
+            elif resp.status not in (200, 202):
+                logger.warning(f"Subscription {event_type} failed: {result}")
+            return result
 
-    async def _handle_event(self, event: dict, callback=None):
+    async def _handle_event(self, event: dict, callback: Optional[Callable] = None):
         payload = event.get("payload", {})
         event_type = payload.get("subscription", {}).get("type", "")
 
@@ -140,12 +162,12 @@ class TwitchStreamIntegration:
             if self._is_help_request(message):
                 logger.info(f"Help request from {chatter}: {message}")
                 result = await self.orch.process_text_query(message)
-                reply = f"@{chatter} {result.answer[:300]}"
+                reply = f"@{chatter} {result.answer[:250]}"
 
                 if callback:
-                    await callback(chatter, message, reply)
+                    await callback(chatter, message, reply, result)
 
-                logger.info(f"Reply to {chatter}: {reply[:100]}...")
+                logger.info(f"Replied to {chatter}")
 
     def _is_help_request(self, message: str) -> bool:
         keywords = [
@@ -153,31 +175,30 @@ class TwitchStreamIntegration:
             "walkthrough", "guide", "tips", "what do i do",
             "where do i go", "how do i beat", "strategy",
         ]
-        msg_lower = message.lower()
-        for kw in keywords:
-            if kw in msg_lower:
-                return True
-        return msg_lower.startswith("!")
+        msg = message.lower()
+        return any(kw in msg for kw in keywords) or message.startswith("!")
 
-    async def send_chat_message(self, channel: str, message: str):
+    async def send_announcement(self, channel: str, message: str):
         try:
-            import requests as sync_requests
-            token = self.access_token or await self._get_app_token()
+            token = await self._get_app_token()
+            broadcaster_id = await self.get_user_id(channel)
 
-            info = await self.get_channel_info(channel)
-            broadcaster_id = info.get("id", "")
-
-            url = f"https://api.twitch.tv/helix/chat/announcements"
-            headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-            async with self._session.post(url, headers=headers, json={
+            url = "https://api.twitch.tv/helix/chat/announcements"
+            headers = {
+                "Client-ID": self.client_id,
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            body = {
                 "broadcaster_id": broadcaster_id,
                 "moderator_id": broadcaster_id,
                 "message": message,
-            }) as resp:
+            }
+
+            async with self._session.post(url, headers=headers, json=body) as resp:
                 return resp.status
         except Exception as e:
-            logger.error(f"Failed to send chat message: {e}")
+            logger.error(f"Failed to send Twitch announcement: {e}")
 
     def stop(self):
         self._running = False

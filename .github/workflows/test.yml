@@ -1,0 +1,40 @@
+name: STREAMBUDDY CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check src/ --ignore=E501,E402
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pip install pytest pytest-asyncio
+      - run: python -m pytest tests/ -v
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t streambuddy .
+      - run: docker run -d --name streambuddy-test streambuddy
+      - run: sleep 5 && docker ps | grep streambuddy-test
+      - run: docker stop streambuddy-test && docker rm streambuddy-test

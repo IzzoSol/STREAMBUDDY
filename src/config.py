@@ -100,6 +100,19 @@ class TwitchConfig:
 
 
 @dataclass
+class YouTubeConfig:
+    enabled: bool = False
+    api_key: Optional[str] = None
+
+
+@dataclass
+class DiscordConfig:
+    enabled: bool = False
+    token: Optional[str] = None
+    command_prefix: str = "!"
+
+
+@dataclass
 class OBSConfig:
     overlay_enabled: bool = True
     overlay_port: int = 8081
@@ -151,6 +164,8 @@ class AppConfig:
     wiki: WikiConfig = field(default_factory=WikiConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     twitch: TwitchConfig = field(default_factory=TwitchConfig)
+    youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
+    discord: DiscordConfig = field(default_factory=DiscordConfig)
     obs: OBSConfig = field(default_factory=OBSConfig)
     api: APIConfig = field(default_factory=APIConfig)
 
@@ -183,6 +198,12 @@ def load_config_from_env() -> AppConfig:
     cfg.twitch.client_id = os.getenv("TWITCH_CLIENT_ID")
     cfg.twitch.client_secret = os.getenv("TWITCH_CLIENT_SECRET")
     cfg.twitch.channel = os.getenv("TWITCH_CHANNEL", "")
+
+    cfg.youtube.enabled = os.getenv("YOUTUBE_ENABLED", "false").lower() == "true"
+    cfg.youtube.api_key = os.getenv("YOUTUBE_API_KEY")
+
+    cfg.discord.enabled = os.getenv("DISCORD_ENABLED", "false").lower() == "true"
+    cfg.discord.token = os.getenv("DISCORD_TOKEN")
 
     cfg.api.host = os.getenv("API_HOST", "0.0.0.0")
     cfg.api.port = int(os.getenv("API_PORT", "8080"))
