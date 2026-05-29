@@ -100,6 +100,34 @@ KNOWN_GAMES = [
     "maple story", "maplestory",
 ]
 
+BOSS_TO_GAME = {
+    # Elden Ring
+    "malenia": "Elden Ring", "radahn": "Elden Ring", "godrick": "Elden Ring",
+    "margit": "Elden Ring", "mohg": "Elden Ring", "maliketh": "Elden Ring",
+    "godfrey": "Elden Ring", "hoarah loux": "Elden Ring", "rennala": "Elden Ring",
+    "rykard": "Elden Ring", "fire giant": "Elden Ring",
+    "tree sentinel": "Elden Ring", "astel": "Elden Ring",
+    # Dark Souls
+    "midir": "Dark Souls 3", "nameless king": "Dark Souls 3",
+    "sister friede": "Dark Souls 3", "gael": "Dark Souls 3",
+    "pontiff sulyvahn": "Dark Souls 3", "abyss watchers": "Dark Souls 3",
+    "dancer": "Dark Souls 3", "soul of cinder": "Dark Souls 3",
+    "artorias": "Dark Souls", "manus": "Dark Souls", "kalameet": "Dark Souls",
+    # Bloodborne
+    "orphan of kos": "Bloodborne", "father gascoigne": "Bloodborne",
+    "amygdala": "Bloodborne", "lady maria": "Bloodborne",
+    "gehrman": "Bloodborne", "moon presence": "Bloodborne",
+    "ludwig": "Bloodborne", "laurence": "Bloodborne",
+    # Sekiro
+    "isshin": "Sekiro", "genichiro": "Sekiro", "owl father": "Sekiro",
+    "demon of hatred": "Sekiro", "lady butterfly": "Sekiro",
+    "guardian ape": "Sekiro", "corrupted monk": "Sekiro",
+    "divine dragon": "Sekiro",
+    # Other
+    "omega weapon": "Final Fantasy", "sephiroth": "Final Fantasy 7",
+    "safer sephiroth": "Final Fantasy 7", "ultima weapon": "Final Fantasy",
+}
+
 BOSS_KEYWORDS = [
     # Elden Ring
     "malenia", "radahn", "godrick", "margit", "mohg", "maliketh",
@@ -146,9 +174,9 @@ def extract_game_from_query(query: str) -> str:
     for game in KNOWN_GAMES:
         if game in query_lower:
             return game.title()
-    for boss in BOSS_KEYWORDS:
-        if boss in query_lower:
-            return ""
+    for boss_name, game_name in BOSS_TO_GAME.items():
+        if boss_name in query_lower:
+            return game_name
     return ""
 
 

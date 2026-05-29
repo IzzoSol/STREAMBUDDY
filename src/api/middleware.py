@@ -17,13 +17,17 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     PUBLIC_PATHS = {
         "/health", "/docs", "/openapi.json",
         "/api/v1/webui", "/api/v1/generate-key",
+        "/api/v1/admin",
         "/obs/overlay", "/obs/overlay/widget",
     }
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        if path in self.PUBLIC_PATHS or path.startswith(("/api/v1/webui", "/obs/")):
+        if path in self.PUBLIC_PATHS:
+            return await call_next(request)
+
+        if any(path.startswith(p) for p in ("/api/v1/webui", "/api/v1/config", "/api/v1/analytics", "/api/v1/ws", "/obs/", "/static/")):
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")

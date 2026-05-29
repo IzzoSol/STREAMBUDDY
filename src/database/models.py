@@ -52,7 +52,56 @@ CREATE TABLE IF NOT EXISTS game_context (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+CREATE TABLE IF NOT EXISTS analytics_hourly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hour TEXT NOT NULL,
+    game TEXT DEFAULT '',
+    platform TEXT DEFAULT 'api',
+    query_count INTEGER DEFAULT 0,
+    avg_response_ms REAL DEFAULT 0.0,
+    error_count INTEGER DEFAULT 0,
+    unique_sessions INTEGER DEFAULT 0,
+    UNIQUE(hour, game, platform)
+);
+
+CREATE TABLE IF NOT EXISTS analytics_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    game TEXT DEFAULT '',
+    platform TEXT DEFAULT 'api',
+    query_count INTEGER DEFAULT 0,
+    avg_response_ms REAL DEFAULT 0.0,
+    error_count INTEGER DEFAULT 0,
+    unique_sessions INTEGER DEFAULT 0,
+    top_queries TEXT DEFAULT '[]',
+    UNIQUE(date, game, platform)
+);
+
+CREATE TABLE IF NOT EXISTS platform_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT UNIQUE NOT NULL,
+    is_active INTEGER DEFAULT 0,
+    started_at TEXT,
+    stopped_at TEXT,
+    error_message TEXT DEFAULT '',
+    config TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    level TEXT DEFAULT 'info',
+    source TEXT DEFAULT 'system',
+    message TEXT NOT NULL,
+    details TEXT DEFAULT '{}',
+    is_read INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_queries_session ON queries(session_id);
 CREATE INDEX IF NOT EXISTS idx_queries_created ON queries(created_at);
 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_game_context_session ON game_context(session_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_hour ON analytics_hourly(hour);
+CREATE INDEX IF NOT EXISTS idx_analytics_date ON analytics_daily(date);
+CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_read ON alerts(is_read);

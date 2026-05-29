@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 from src.orchestrator import GameAssistOrchestrator, AssistResult
 from src.database.db import db
-from src.config import config, TIERS
+from src.config import config, TIERS, validate_config
+from src.analytics import analytics
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
@@ -84,6 +85,9 @@ async def text_query(req: QueryRequest):
 
     result = await orch.process_text_query(req.query)
 
+    elapsed_ms = (time.time() - start) * 1000
+    is_error = not result.answer or result.confidence < 0.1
+
     await db.save_query(req.session_id, {
         "query": result.query,
         "game": result.game,
@@ -97,6 +101,8 @@ async def text_query(req: QueryRequest):
         "reddit_results": result.reddit_results[:5],
         "wiki_results": result.wiki_results[:5],
     })
+
+    await analytics.record_query(req.session_id, result.game, "api", elapsed_ms, is_error)
 
     if result.confidence > 0.5 and result.answer:
         await db.set_cache(cache_key, json.dumps(_result_to_response(result, req.session_id).model_dump()))
@@ -686,17 +692,25 @@ async def start_twitch(
 ):
     from src.twitch import TwitchStreamIntegration
 
+    if not config.twitch.client_id or not config.twitch.client_secret:
+        await analytics.log_alert("error", "twitch", "Twitch start failed: missing credentials")
+        raise HTTPException(400, "TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET must be configured")
+
     twitch = TwitchStreamIntegration(
         client_id=config.twitch.client_id,
         client_secret=config.twitch.client_secret,
     )
     twitch.orch = _get_orchestrator(session_id)
+    await analytics.update_platform_status("twitch", True)
+    await analytics.log_alert("info", "twitch", f"Twitch integration started for channel: {channel}")
     asyncio.create_task(twitch.monitor_chat(channel))
     return {"status": "started", "channel": channel, "session_id": session_id}
 
 
 @router.post("/twitch/stop")
 async def stop_twitch():
+    await analytics.update_platform_status("twitch", False)
+    await analytics.log_alert("info", "twitch", "Twitch integration stopped")
     return {"status": "stopped"}
 
 
@@ -707,36 +721,532 @@ async def start_youtube(
 ):
     from src.youtube.integration import YouTubeStreamIntegration
 
+    if not config.youtube.api_key:
+        await analytics.log_alert("error", "youtube", "YouTube start failed: missing API key")
+        raise HTTPException(400, "YOUTUBE_API_KEY must be configured")
+
     yt = YouTubeStreamIntegration(api_key=config.youtube.api_key)
     yt.orch = _get_orchestrator(session_id)
+    await analytics.update_platform_status("youtube", True)
+    await analytics.log_alert("info", "youtube", f"YouTube integration started for video: {video_id}")
     asyncio.create_task(yt.monitor_chat(video_id))
     return {"status": "started", "video_id": video_id, "session_id": session_id}
+
+
+@router.post("/youtube/stop")
+async def stop_youtube():
+    await analytics.update_platform_status("youtube", False)
+    await analytics.log_alert("info", "youtube", "YouTube integration stopped")
+    return {"status": "stopped"}
 
 
 @router.post("/discord/start")
 async def start_discord(session_id: str = Form("default")):
     from src.discord_bot.bot import DiscordBotIntegration
 
+    if not config.discord.token:
+        await analytics.log_alert("error", "discord", "Discord start failed: missing token")
+        raise HTTPException(400, "DISCORD_TOKEN must be configured")
+
     bot = DiscordBotIntegration(token=config.discord.token)
     bot.orch = _get_orchestrator(session_id)
+    await analytics.update_platform_status("discord", True)
+    await analytics.log_alert("info", "discord", "Discord bot started")
     asyncio.create_task(bot.start())
     return {"status": "started", "session_id": session_id}
 
 
+@router.post("/discord/stop")
+async def stop_discord():
+    await analytics.update_platform_status("discord", False)
+    await analytics.log_alert("info", "discord", "Discord bot stopped")
+    return {"status": "stopped"}
+
+
+#
+# Analytics Endpoints
+#
+
+@router.get("/analytics/summary")
+async def analytics_summary():
+    return await analytics.get_summary()
+
+
+@router.get("/analytics/popular-games")
+async def analytics_popular_games(days: int = 7, limit: int = 20):
+    return await analytics.get_popular_games(days=days, limit=limit)
+
+
+@router.get("/analytics/daily")
+async def analytics_daily(days: int = 14):
+    return await analytics.get_daily_stats(days=days)
+
+
+@router.get("/analytics/platforms")
+async def analytics_platforms():
+    return await analytics.get_platform_stats()
+
+
+@router.get("/analytics/top-queries")
+async def analytics_top_queries(days: int = 7, limit: int = 20):
+    return await analytics.get_top_queries(days=days, limit=limit)
+
+
+@router.get("/analytics/trend")
+async def analytics_trend(hours: int = 24):
+    return await analytics.get_hourly_trend(hours=hours)
+
+
+@router.get("/analytics/alerts")
+async def analytics_alerts(limit: int = 50, unread: bool = False):
+    return await analytics.get_alerts(limit=limit, unread_only=unread)
+
+
+@router.post("/analytics/alerts/read")
+async def analytics_alerts_read(alert_ids: list[int] = None):
+    await analytics.mark_alerts_read(alert_ids)
+    return {"status": "ok"}
+
+
+#
+# Admin Dashboard
+#
+
+ADMIN_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STREAMBUDDY Admin</title>
+<style>
+  :root {
+    --bg: #0b0b1a;
+    --surface: #14142a;
+    --surface2: #1c1c3a;
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --text: #e0e0e0;
+    --text2: #8899bb;
+    --success: #22c55e;
+    --warning: #eab308;
+    --danger: #ef4444;
+    --border: #2a2a4a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-size: 16px; font-weight: 700; }
+  .topbar h1 span { color: var(--accent2); }
+  .topbar .nav { display: flex; gap: 16px; }
+  .topbar .nav a { color: var(--text2); text-decoration: none; font-size: 13px; cursor: pointer; padding: 4px 12px; border-radius: 6px; }
+  .topbar .nav a:hover, .topbar .nav a.active { color: var(--accent); background: var(--surface2); }
+  .main { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .stat-card .label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .stat-card .sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .count { font-size: 11px; color: var(--text2); font-weight: 400; }
+  .card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .card th { text-align: left; color: var(--text2); font-weight: 600; font-size: 11px; text-transform: uppercase; padding: 8px 4px; border-bottom: 1px solid var(--border); }
+  .card td { padding: 8px 4px; border-bottom: 1px solid var(--border); }
+  .card tr:last-child td { border: none; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .badge.online { background: rgba(34,197,94,0.15); color: var(--success); }
+  .badge.offline { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .badge.info { background: rgba(0,212,255,0.15); color: var(--accent); }
+  .badge.warn { background: rgba(234,179,8,0.15); color: var(--warning); }
+  .badge.err { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .btn { background: var(--accent2); color: white; border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .btn:hover { filter: brightness(1.15); }
+  .btn.sm { padding: 4px 10px; font-size: 11px; }
+  .btn.success { background: var(--success); }
+  .btn.danger { background: var(--danger); }
+  .btn.warning { background: var(--warning); color: #000; }
+  .btn.outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--surface2); margin: 2px; }
+  .platform-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .platform-row:last-child { border: none; }
+  .platform-row .info { display: flex; align-items: center; gap: 12px; }
+  .platform-row .info .name { font-size: 14px; font-weight: 600; }
+  .platform-row .info .desc { font-size: 12px; color: var(--text2); }
+  .chart-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .chart-bar .bar { height: 20px; border-radius: 4px; background: linear-gradient(90deg, var(--accent2), var(--accent)); min-width: 4px; transition: width 0.5s; }
+  .chart-bar .bar-label { font-size: 12px; min-width: 120px; }
+  .chart-bar .bar-val { font-size: 12px; color: var(--text2); min-width: 40px; text-align: right; }
+  .trend-line { display: flex; align-items: flex-end; gap: 2px; height: 80px; padding: 8px 0; }
+  .trend-bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--accent2); min-height: 2px; transition: height 0.5s; }
+  .trend-bar:hover { opacity: 0.8; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+  .fade-in { animation: fadeIn 0.3s; }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>SHADDAI <span>STREAMBUDDY</span> Admin</h1>
+  <div class="nav">
+    <a class="active" onclick="switchTab('overview',this)">Overview</a>
+    <a onclick="switchTab('platforms',this)">Platforms</a>
+    <a onclick="switchTab('analytics',this)">Analytics</a>
+    <a onclick="switchTab('alerts',this)">Alerts</a>
+    <a onclick="switchTab('config',this)">Config</a>
+    <a href="/api/v1/webui" target="_blank" style="color:var(--accent)">Chat</a>
+  </div>
+</div>
+<div class="main">
+
+<!-- Overview Tab -->
+<div id="tab-overview" class="tab-content active">
+  <div class="grid" id="statsGrid">
+    <div class="stat-card"><div class="label">Total Queries</div><div class="value" id="stat-queries">-</div></div>
+    <div class="stat-card"><div class="label">Active Sessions</div><div class="value" id="stat-sessions">-</div></div>
+    <div class="stat-card"><div class="label">Games Detected</div><div class="value" id="stat-games">-</div></div>
+    <div class="stat-card"><div class="label">Avg Response</div><div class="value" id="stat-response">-</div><div class="sub">milliseconds</div></div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="card" id="popularGamesCard">
+      <h3>Popular Games <span class="count">(7d)</span></h3>
+      <div id="popularGamesList"><div class="spinner"></div></div>
+    </div>
+    <div class="card" id="topQueriesCard">
+      <h3>Top Queries <span class="count">(7d)</span></h3>
+      <div id="topQueriesList"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Daily Trend</h3>
+    <div id="dailyTrend"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Platforms Tab -->
+<div id="tab-platforms" class="tab-content">
+  <div class="card">
+    <h3>Integration Status</h3>
+    <div id="platformList"><div class="spinner"></div></div>
+  </div>
+  <div class="card">
+    <h3>Start Platform</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="startPlatform('twitch')">Start Twitch</button>
+      <button class="btn" onclick="startPlatform('youtube')">Start YouTube</button>
+      <button class="btn success" onclick="startPlatform('discord')">Start Discord</button>
+    </div>
+    <div style="margin-top:8px">
+      <input id="twitchChannel" placeholder="Twitch channel name" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);width:200px;font-size:13px">
+      <input id="youtubeVideo" placeholder="YouTube video ID" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);width:200px;font-size:13px;margin-left:4px">
+    </div>
+    <div id="platformResult" style="margin-top:8px;font-size:13px;color:var(--text2)"></div>
+  </div>
+</div>
+
+<!-- Analytics Tab -->
+<div id="tab-analytics" class="tab-content">
+  <div class="card">
+    <h3>Platform Breakdown <span class="count">(30d)</span></h3>
+    <div id="platformBreakdown"><div class="spinner"></div></div>
+  </div>
+  <div class="card">
+    <h3>Hourly Trend <span class="count">(24h)</span></h3>
+    <div id="hourlyTrend"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Alerts Tab -->
+<div id="tab-alerts" class="tab-content">
+  <div class="card">
+    <h3>System Alerts <button class="btn sm outline" onclick="clearAlerts()" style="margin-left:auto">Mark All Read</button></h3>
+    <div id="alertsList"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Config Tab -->
+<div id="tab-config" class="tab-content">
+  <div class="card">
+    <h3>Configuration Validation</h3>
+    <div id="configCheck"><div class="spinner"></div></div>
+  </div>
+  <div class="card">
+    <h3>API Key Generator</h3>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="keyLabel" placeholder="Label" value="admin-key" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <select id="keyTier" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+        <option value="free">Free</option>
+        <option value="pro" selected>Pro</option>
+        <option value="enterprise">Enterprise</option>
+      </select>
+      <button class="btn" onclick="generateKey()">Generate Key</button>
+    </div>
+    <div id="keyResult" style="margin-top:8px"></div>
+  </div>
+</div>
+
+</div>
+
+<script>
+let refreshTimer = null;
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  if (el) el.classList.add('active');
+  refreshTab(name);
+}
+
+function refreshTab(name) {
+  if (name === 'overview') { loadOverview(); loadDailyTrend(); }
+  if (name === 'platforms') loadPlatforms();
+  if (name === 'analytics') { loadPlatformBreakdown(); loadHourlyTrend(); }
+  if (name === 'alerts') loadAlerts();
+  if (name === 'config') loadConfig();
+}
+
+// Load functions
+async function loadOverview() {
+  try {
+    const r = await fetch('/api/v1/analytics/summary');
+    const d = await r.json();
+    document.getElementById('stat-queries').textContent = d.total_queries || 0;
+    document.getElementById('stat-sessions').textContent = d.total_sessions || 0;
+    document.getElementById('stat-games').textContent = d.games_detected || 0;
+    document.getElementById('stat-response').textContent = d.avg_response_ms ? d.avg_response_ms + 'ms' : '-';
+  } catch(e) {}
+
+  try {
+    const r = await fetch('/api/v1/analytics/popular-games?days=7&limit=10');
+    const games = await r.json();
+    const list = document.getElementById('popularGamesList');
+    if (!games || games.length === 0) { list.innerHTML = '<div style="color:var(--text2);font-size:13px">No data yet</div>'; return; }
+    const maxQ = Math.max(...games.map(g => g.total_queries));
+    list.innerHTML = games.map(g =>
+      '<div class="chart-bar fade-in"><span class="bar-label">' + escapeHtml(g.game) + '</span><div class="bar" style="width:' + ((g.total_queries / maxQ) * 100) + '%"></div><span class="bar-val">' + g.total_queries + '</span></div>'
+    ).join('');
+  } catch(e) {}
+
+  try {
+    const r = await fetch('/api/v1/analytics/top-queries?days=7&limit=10');
+    const qs = await r.json();
+    const list = document.getElementById('topQueriesList');
+    if (!qs || qs.length === 0) { list.innerHTML = '<div style="color:var(--text2);font-size:13px">No data yet</div>'; return; }
+    list.innerHTML = '<table><tr><th>Query</th><th>Game</th><th>Freq</th></tr>' +
+      qs.map(q => '<tr class="fade-in"><td>' + escapeHtml(q.query && q.query.length > 50 ? q.query.slice(0,50)+'...' : (q.query||'')) + '</td><td>' + escapeHtml(q.game||'-') + '</td><td>' + q.frequency + '</td></tr>').join('') +
+      '</table>';
+  } catch(e) {}
+}
+
+async function loadDailyTrend() {
+  try {
+    const r = await fetch('/api/v1/analytics/daily?days=14');
+    const days = await r.json();
+    const el = document.getElementById('dailyTrend');
+    if (!days || days.length === 0) { el.innerHTML = '<div style="color:var(--text2);font-size:13px">No data yet</div>'; return; }
+    const maxQ = Math.max(...days.map(d => d.total_queries));
+    el.innerHTML = '<div class="trend-line">' +
+      days.map(d => {
+        const h = maxQ > 0 ? (d.total_queries / maxQ) * 100 : 2;
+        const dateLabel = d.date ? d.date.slice(5) : '';
+        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center"><div class="trend-bar" style="height:' + Math.max(h,2) + '%" title="' + d.date + ': ' + d.total_queries + ' queries, ' + (d.avg_ms||0).toFixed(0) + 'ms"></div><span style="font-size:9px;color:var(--text2);margin-top:4px">' + dateLabel + '</span></div>';
+      }).join('') +
+      '</div>';
+  } catch(e) {}
+}
+
+async function loadPlatforms() {
+  try {
+    const r = await fetch('/api/v1/analytics/summary');
+    const d = await r.json();
+    const platforms = d.platforms || {};
+    const el = document.getElementById('platformList');
+    const names = {twitch:'Twitch',youtube:'YouTube',discord:'Discord',obs:'OBS Overlay'};
+    el.innerHTML = Object.entries(names).map(([key,label]) =>
+      '<div class="platform-row fade-in"><div class="info"><span class="badge ' + (platforms[key] ? 'online' : 'offline') + '">' + (platforms[key] ? 'ON' : 'OFF') + '</span><span class="name">' + label + '</span></div></div>'
+    ).join('');
+  } catch(e) {}
+}
+
+async function loadPlatformBreakdown() {
+  try {
+    const r = await fetch('/api/v1/analytics/platforms');
+    const data = await r.json();
+    const el = document.getElementById('platformBreakdown');
+    if (!data || Object.keys(data).length === 0) { el.innerHTML = '<div style="color:var(--text2);font-size:13px">No data yet</div>'; return; }
+    const maxQ = Math.max(...Object.values(data).map(p => p.total_queries||0));
+    el.innerHTML = Object.entries(data).map(([plat, stats]) =>
+      '<div class="chart-bar fade-in"><span class="bar-label">' + plat + '</span><div class="bar" style="width:' + ((stats.total_queries / maxQ) * 100) + '%"></div><span class="bar-val">' + stats.total_queries + ' queries, ' + (stats.avg_ms||0).toFixed(0) + 'ms</span></div>'
+    ).join('');
+  } catch(e) {}
+}
+
+async function loadHourlyTrend() {
+  try {
+    const r = await fetch('/api/v1/analytics/trend?hours=24');
+    const hours = await r.json();
+    const el = document.getElementById('hourlyTrend');
+    if (!hours || hours.length === 0) { el.innerHTML = '<div style="color:var(--text2);font-size:13px">No data yet</div>'; return; }
+    const maxQ = Math.max(...hours.map(h => h.queries));
+    el.innerHTML = '<div class="trend-line">' +
+      hours.map(h => {
+        const pct = maxQ > 0 ? (h.queries / maxQ) * 100 : 2;
+        const label = h.hour ? h.hour.slice(11,16) : '';
+        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center"><div class="trend-bar" style="height:' + Math.max(pct,2) + '%;background:var(--accent)" title="' + h.hour + ': ' + h.queries + ' queries"></div><span style="font-size:9px;color:var(--text2);margin-top:4px">' + label + '</span></div>';
+      }).join('') +
+      '</div>';
+  } catch(e) {}
+}
+
+async function loadAlerts() {
+  try {
+    const r = await fetch('/api/v1/analytics/alerts?limit=50');
+    const alerts = await r.json();
+    const el = document.getElementById('alertsList');
+    if (!alerts || alerts.length === 0) { el.innerHTML = '<div style="color:var(--text2);font-size:13px">No alerts</div>'; return; }
+    el.innerHTML = '<table><tr><th>Level</th><th>Source</th><th>Message</th><th>Time</th></tr>' +
+      alerts.map(a =>
+        '<tr class="fade-in"><td><span class="badge ' + (a.level==='error'?'err':a.level==='warning'?'warn':'info') + '">' + a.level + '</span></td><td>' + escapeHtml(a.source) + '</td><td>' + escapeHtml(a.message) + '</td><td>' + (a.created_at ? a.created_at.slice(11,19) : '') + '</td></tr>'
+      ).join('') +
+      '</table>';
+  } catch(e) {}
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/v1/config/validate');
+    const d = await r.json();
+    const el = document.getElementById('configCheck');
+    if (d.warnings && d.warnings.length > 0) {
+      el.innerHTML = '<div style="color:var(--warning)">' + d.warnings.length + ' warnings</div>' +
+        d.warnings.map(w => '<div class="fade-in" style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">' + escapeHtml(w) + '</div>').join('');
+    } else {
+      el.innerHTML = '<div style="color:var(--success);font-size:14px">All config checks passed</div>';
+    }
+  } catch(e) {
+    document.getElementById('configCheck').innerHTML = '<div style="color:var(--danger)">Could not load config</div>';
+  }
+}
+
+// Actions
+async function startPlatform(platform) {
+  const result = document.getElementById('platformResult');
+  result.innerHTML = '<span class="spinner"></span> Starting...';
+  try {
+    let body;
+    if (platform === 'twitch') {
+      const channel = document.getElementById('twitchChannel').value.trim();
+      if (!channel) { result.innerHTML = '<span style="color:var(--warning)">Enter a Twitch channel name</span>'; return; }
+      body = new URLSearchParams({channel, session_id: 'admin'});
+    } else if (platform === 'youtube') {
+      const videoId = document.getElementById('youtubeVideo').value.trim();
+      if (!videoId) { result.innerHTML = '<span style="color:var(--warning)">Enter a YouTube video ID</span>'; return; }
+      body = new URLSearchParams({video_id: videoId, session_id: 'admin'});
+    } else {
+      body = new URLSearchParams({session_id: 'admin'});
+    }
+    const r = await fetch('/api/v1/' + platform + '/start', { method: 'POST', body, headers: {'Content-Type':'application/x-www-form-urlencoded'} });
+    const d = await r.json();
+    result.innerHTML = '<span style="color:var(--success)">' + (d.status || 'Started') + '</span>';
+    setTimeout(() => loadPlatforms(), 1000);
+  } catch(e) {
+    result.innerHTML = '<span style="color:var(--danger)">Error: ' + e.message + '</span>';
+  }
+}
+
+async function clearAlerts() {
+  await fetch('/api/v1/analytics/alerts/read', { method: 'POST' });
+  loadAlerts();
+}
+
+async function generateKey() {
+  const label = document.getElementById('keyLabel').value.trim() || 'admin-key';
+  const tier = document.getElementById('keyTier').value;
+  try {
+    const r = await fetch('/api/v1/generate-key?label=' + encodeURIComponent(label) + '&tier=' + tier);
+    const d = await r.json();
+    const el = document.getElementById('keyResult');
+    el.innerHTML = '<div style="background:var(--surface2);border:1px solid var(--success);border-radius:6px;padding:10px;font-size:13px">' +
+      '<div style="color:var(--success);font-weight:600;margin-bottom:4px">Key Generated (' + d.tier + ')</div>' +
+      '<code style="word-break:break-all;background:var(--bg);padding:6px;border-radius:4px;display:block">' + d.api_key + '</code>' +
+      '<div style="color:var(--warning);margin-top:4px;font-size:12px">Save this key - it will not be shown again</div></div>';
+  } catch(e) {
+    document.getElementById('keyResult').innerHTML = '<span style="color:var(--danger)">Error generating key</span>';
+  }
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// Auto-refresh overview every 10s
+setInterval(() => {
+  const active = document.querySelector('.tab-content.active');
+  if (active) refreshTab(active.id.replace('tab-',''));
+}, 10000);
+
+// Init
+loadOverview();
+loadDailyTrend();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard():
+    return ADMIN_HTML
+
+
+#
+# Config Validation
+#
+
+@router.get("/config/validate")
+async def check_config():
+    warnings = validate_config()
+    return {"status": "ok" if not warnings else "warnings", "warnings": warnings}
+
+
+#
+# Platform Status Endpoints
+#
+
 @router.get("/platforms")
 async def get_platforms():
+    await db.connect()
+    cursor = await db._conn.execute("SELECT platform, is_active, started_at, error_message FROM platform_status")
+    rows = await cursor.fetchall()
+    platform_info = {r["platform"]: dict(r) for r in rows}
+
     return {
         "twitch": {
             "enabled": config.twitch.enabled,
             "channel": config.twitch.channel or "",
+            "active": platform_info.get("twitch", {}).get("is_active", False),
         },
         "youtube": {
             "enabled": config.youtube.enabled,
+            "active": platform_info.get("youtube", {}).get("is_active", False),
         },
         "discord": {
             "enabled": config.discord.enabled,
+            "active": platform_info.get("discord", {}).get("is_active", False),
         },
         "obs_overlay": {
             "url": "/obs/overlay",
+            "active": config.obs.overlay_enabled,
         },
     }

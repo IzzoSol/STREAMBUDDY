@@ -215,4 +215,38 @@ def load_config_from_env() -> AppConfig:
     return cfg
 
 
+
+
+def validate_config() -> list[str]:
+    warnings = []
+
+    t = config.twitch
+    if t.enabled and not (t.client_id and t.client_secret):
+        warnings.append("TWITCH_ENABLED=true but TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET missing")
+
+    y = config.youtube
+    if y.enabled and not y.api_key:
+        warnings.append("YOUTUBE_ENABLED=true but YOUTUBE_API_KEY missing")
+
+    d = config.discord
+    if d.enabled and not d.token:
+        warnings.append("DISCORD_ENABLED=true but DISCORD_TOKEN missing")
+
+    w = config.web_search
+    if w.provider == "google" and not (w.api_key and w.search_engine_id):
+        warnings.append("Google search enabled but SEARCH_API_KEY or SEARCH_ENGINE_ID missing")
+
+    v = config.vision
+    if v.provider == "openai" and not v.api_key:
+        warnings.append("OpenAI vision enabled but VISION_API_KEY / OPENAI_API_KEY missing")
+
+    s = config.stt
+    if s.provider == "openai" and not s.api_key:
+        warnings.append("OpenAI STT enabled but STT_API_KEY / OPENAI_API_KEY missing")
+
+    Path(config.data_dir).mkdir(parents=True, exist_ok=True)
+
+    return warnings
+
+
 config = load_config_from_env()
