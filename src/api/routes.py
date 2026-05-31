@@ -80,6 +80,7 @@ async def text_query(req: QueryRequest):
         return QueryResponse(**cached_data)
 
     orch = _get_orchestrator(req.session_id)
+    orch.detect_player_language(req.query)
     if req.game:
         orch.current_game = req.game
 
@@ -324,6 +325,147 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket disconnected: session={session_id}")
 
 
+#
+# Strategy Endpoints
+#
+
+class StrategyRequest(BaseModel):
+    boss: str
+    game: str = ""
+
+
+@router.post("/strategy/boss")
+async def boss_strategy(req: StrategyRequest, session_id: str = "default"):
+    orch = _get_orchestrator(session_id)
+    swarm = orch.analyze_boss_strategy(req.boss, req.game)
+    if not swarm:
+        boss_info = orch.get_boss_info(req.boss)
+        if boss_info:
+            return {
+                "found": True,
+                "boss": req.boss,
+                "game": boss_info.game,
+                "weaknesses": boss_info.weaknesses,
+                "resistances": boss_info.resistances,
+                "recommended_level": boss_info.recommended_level,
+                "key_moves": boss_info.key_moves,
+                "loadout_tips": boss_info.loadout_tips,
+                "phase_strategies": boss_info.phase_strategies,
+                "swarm_available": False,
+            }
+        return {"found": False, "boss": req.boss, "swarm_available": False}
+
+    return {
+        "found": True,
+        "boss": swarm.boss,
+        "game": swarm.game,
+        "swarm_confidence": swarm.swarm_confidence,
+        "agreement_level": swarm.agreement_level,
+        "recommended_approach": swarm.recommended_approach,
+        "top_recommendations": swarm.top_recommendations,
+        "consensus_loadout": swarm.consensus_loadout,
+        "votes": [
+            {
+                "agent": v.agent_name,
+                "focus": v.agent_focus,
+                "confidence": v.confidence,
+                "key_advice": v.key_advice,
+            }
+            for v in swarm.votes
+        ],
+        "swarm_available": True,
+    }
+
+
+@router.get("/strategy/bosses")
+async def list_bosses(session_id: str = "default"):
+    orch = _get_orchestrator(session_id)
+    return {"bosses": orch.list_known_bosses(), "count": len(orch.list_known_bosses())}
+
+
+@router.get("/strategy/agents")
+async def list_agents():
+    from src.strategy.strategies import STRATEGY_AGENTS
+    return {"agents": STRATEGY_AGENTS}
+
+
+#
+# YouTube Guide Endpoints
+#
+
+@router.post("/youtube/guide")
+async def youtube_guide(
+    boss: str = Form(...),
+    game: str = Form(""),
+    session_id: str = Form("default"),
+):
+    orch = _get_orchestrator(session_id)
+    guide = await orch.find_youtube_guide(boss, game)
+    if guide:
+        return {"found": True, "guide": guide}
+    return {"found": False, "message": "No YouTube guide found"}
+
+
+#
+# i18n Endpoints
+#
+
+@router.get("/i18n/languages")
+async def get_languages():
+    from src.i18n.lang import HELP_KEYWORDS
+    return {"languages": list(HELP_KEYWORDS.keys())}
+
+
+@router.post("/i18n/detect")
+async def detect_language_from_text(text: str = Form(...)):
+    from src.i18n.lang import detect_language
+    lang = detect_language(text)
+    return {"language": lang, "text_preview": text[:50]}
+
+
+#
+# Webhook Endpoints
+#
+
+@router.post("/webhook/register")
+async def register_webhook(
+    name: str = Form(...),
+    url: str = Form(...),
+    session_id: str = Form("default"),
+):
+    orch = _get_orchestrator(session_id)
+    from src.notifications.webhook import WebhookNotifier
+    notifier = WebhookNotifier()
+    notifier.register_webhook(name, url)
+    await db._conn.execute(
+        "INSERT OR REPLACE INTO webhooks (name, url, provider, created_at) VALUES (?, ?, ?, ?)",
+        (name, url, "discord" if "discord" in url else "generic", datetime.utcnow().isoformat()),
+    )
+    await db._conn.commit()
+    return {"status": "registered", "name": name, "url": url}
+
+
+@router.get("/webhook/list")
+async def list_webhooks():
+    await db.connect()
+    cursor = await db._conn.execute("SELECT name, url, provider, is_active, created_at FROM webhooks ORDER BY created_at DESC")
+    rows = await cursor.fetchall()
+    return {"webhooks": [dict(r) for r in rows]}
+
+
+@router.post("/webhook/test")
+async def test_webhook(name: str = Form(...), session_id: str = Form("default")):
+    await db.connect()
+    cursor = await db._conn.execute("SELECT url, provider FROM webhooks WHERE name = ? AND is_active = 1", (name,))
+    row = await cursor.fetchone()
+    if not row:
+        return {"status": "error", "message": f"Webhook '{name}' not found"}
+    from src.notifications.webhook import WebhookNotifier
+    notifier = WebhookNotifier()
+    success = await notifier.send_discord(row["url"], "STREAMBUDDY test notification", "Test")
+    return {"status": "sent" if success else "failed", "name": name}
+
+
 UI_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -414,7 +556,7 @@ UI_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="header">
-  <div><h1>Game Assist AI <span class="badge">v2.0</span></h1></div>
+  <div><h1>Game Assist AI <span class="badge">v2.3</span></h1></div>
   <div class="session-info"><span class="status-dot online"></span>Session: <span id="sessionDisplay">default</span></div>
 </div>
 <div class="main">

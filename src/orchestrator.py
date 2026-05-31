@@ -9,6 +9,9 @@ from typing import Optional
 from src.voice import AudioCapture, SpeechToText
 from src.gameplay import ScreenCapture, VisionAnalyzer
 from src.web import WebSearch, RedditScraper, WikiScraper
+from src.strategy.swarm import StrategySwarm, SwarmConsensus
+from src.strategy.strategies import get_boss_strategy, get_game_tips, BOSS_STRATEGIES
+from src.i18n.lang import detect_language, HELP_KEYWORDS, CONTEXT_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +234,10 @@ class GameAssistOrchestrator:
         self.wiki = WikiScraper()
 
         self.current_game = ""
+        self.current_language = "en"
         self.session_history: list[AssistResult] = []
+        self.strategy_swarm = StrategySwarm()
+        self.youtube_finder = None
 
     async def process_voice_command(self, duration: float = 5.0) -> AssistResult:
         start = datetime.now()
@@ -317,6 +323,8 @@ class GameAssistOrchestrator:
             timestamp=datetime.now().isoformat(),
         )
 
+        self.detect_player_language(query)
+
         context = await self.stt.extract_game_context(query)
         result.topic = ", ".join(context["categories"])
 
@@ -364,10 +372,71 @@ class GameAssistOrchestrator:
         result.confidence = min(1.0, len(all_sources) / 5)
 
         result.answer = await self._generate_answer(result)
+
+        if boss and self.strategy_swarm.agents:
+            from src.config import config
+            if config.strategy.swarm_enabled:
+                try:
+                    swarm_result = self.analyze_boss_strategy(boss)
+                    if swarm_result and swarm_result.swarm_confidence > 0.5:
+                        strat_section = f"\n\n## 🧠 Swarm Strategy for {boss}"
+                        strat_section += f"\n**Agreement:** {swarm_result.agreement_level * 100:.0f}%"
+                        strat_section += f"\n**Confidence:** {swarm_result.swarm_confidence * 100:.0f}%"
+                        strat_section += f"\n\n**Top Recommendations:**"
+                        for rec in swarm_result.top_recommendations[:3]:
+                            strat_section += f"\n- {rec}"
+                        if swarm_result.consensus_loadout:
+                            strat_section += f"\n\n**Recommended Loadout:**"
+                            for item in swarm_result.consensus_loadout[:5]:
+                                strat_section += f"\n- {item}"
+                        result.answer += strat_section
+                        result.confidence = max(result.confidence, swarm_result.swarm_confidence)
+                except Exception as e:
+                    logger.warning(f"Swarm analysis failed: {e}")
+
         result.processing_time_ms = (datetime.now() - start).total_seconds() * 1000
         self.session_history.append(result)
 
         return result
+
+    def detect_player_language(self, text: str) -> str:
+        self.current_language = detect_language(text)
+        return self.current_language
+
+    def get_localized_keywords(self) -> list[str]:
+        return HELP_KEYWORDS.get(self.current_language, HELP_KEYWORDS["en"])
+
+    def get_localized_context(self) -> dict:
+        return CONTEXT_CATEGORIES.get(self.current_language, CONTEXT_CATEGORIES["en"])
+
+    async def analyze_boss_strategy(self, boss_name: str, game: str = "") -> Optional[SwarmConsensus]:
+        return self.strategy_swarm.analyze_boss(boss_name, game or self.current_game)
+
+    def get_boss_info(self, boss_name: str):
+        return get_boss_strategy(boss_name)
+
+    def get_game_genre_tips(self, genre: str) -> list[str]:
+        return get_game_tips(genre)
+
+    def list_known_bosses(self) -> list[dict]:
+        return [
+            {"name": k.replace("_", " ").title(), "game": v["game"]}
+            for k, v in BOSS_STRATEGIES.items()
+        ]
+
+    async def find_youtube_guide(self, boss: str, game: str = "") -> Optional[dict]:
+        game_name = game or self.current_game
+        if not game_name:
+            return None
+        try:
+            from src.web.youtube_transcript import YouTubeTranscriptFinder
+            from src.config import config
+            if config.youtube.api_key:
+                finder = YouTubeTranscriptFinder(api_key=config.youtube.api_key)
+                return await finder.find_guide_for_boss(game_name, boss)
+        except Exception as e:
+            logger.warning(f"YouTube guide search failed: {e}")
+        return None
 
     async def _generate_answer(self, result: AssistResult) -> str:
         try:

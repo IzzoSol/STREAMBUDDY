@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="game-assist-ai",
-    version="1.0.0",
-    description="Real-time game assistant that scans voice, gameplay, and internet for walkthrough help",
+    version="2.3.0",
+    description="Real-time game assistant with strategy swarm engine — voice, gameplay, internet, and 7-agent AI for walkthrough help",
     author="Game Assist AI",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
@@ -27,6 +27,7 @@ setup(
             "anthropic>=0.31.0",
             "asyncpraw>=7.7.0",
             "beautifulsoup4>=4.12.0",
+            "youtube_transcript_api>=0.6.0",
         ],
     },
     entry_points={

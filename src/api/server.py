@@ -89,8 +89,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="STREAMBUDDY",
-    description="AI game assistant — voice, gameplay, and internet scan for walkthrough help. Twitch + OBS + YouTube + Discord ready.",
-    version="2.1.0",
+    description="AI game assistant — voice, gameplay, and internet scan for walkthrough help. Twitch + OBS + YouTube + Discord + Strategy Swarm.",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -118,7 +118,7 @@ async def health():
     return {
         "status": "ok",
         "service": "streambuddy",
-        "version": "2.1.0",
+        "version": "2.3.0",
         "twitch_connected": config.twitch.enabled,
         "discord_connected": config.discord.enabled,
         "youtube_connected": config.youtube.enabled,

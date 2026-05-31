@@ -65,9 +65,9 @@ if ($Api) {
 Run-Setup
 
 Write-Host ""
-Write-Host "==============================" -ForegroundColor Magenta
-Write-Host "  STREAMBUDDY v2.0" -ForegroundColor Cyan
-Write-Host "  AI Game Assistant" -ForegroundColor Cyan
+Write-Host "===================================" -ForegroundColor Magenta
+Write-Host "  STREAMBUDDY v2.3" -ForegroundColor Cyan
+Write-Host "  AI Game Assistant + Strategy Swarm" -ForegroundColor Cyan
 Write-Host "==============================" -ForegroundColor Magenta
 Write-Host ""
 Write-Host "1) Start API server (port 8080)" -ForegroundColor Yellow

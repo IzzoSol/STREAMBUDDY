@@ -1,6 +1,6 @@
-# STREAMBUDDY - AI Game Assistant
+# STREAMBUDDY v2.3 - AI Game Assistant
 
-Real-time game assistant that scans **voice**, **gameplay**, and **internet posts** for walkthrough help. Built for streamers, with Twitch + OBS integration.
+Real-time game assistant that scans **voice**, **gameplay**, and **internet posts** for walkthrough help. Built for streamers, with Twitch + OBS + YouTube + Discord integration and a **Strategy Swarm Engine**.
 
 ## Features
 
@@ -9,10 +9,15 @@ Real-time game assistant that scans **voice**, **gameplay**, and **internet post
 - **Web Search** — Scans Google, Bing, Reddit, game wikis for guides and walkthroughs
 - **Twitch Integration** — Monitors chat for help questions, auto-replies with answers
 - **OBS Overlay** — Built-in browser source overlay showing help cards on stream
+- **YouTube Guide Search** — Finds and analyzes YouTube game guide videos and transcripts
+- **Strategy Swarm Engine** (New in v2.3) — 7 AI agents (Aggressor, Defender, Optimizer, Scholar, Preparer, Improviser, Veteran) analyze bosses and vote on the best strategy
+- **Multi-Language Support** — Auto-detects player language from English, Spanish, French, German, Japanese, Chinese, Portuguese, Russian, Korean
+- **Webhook Notifications** — Discord/Slack/Generic webhook alerts for strategy updates and system events
 - **AI Orchestrator** — Combines all inputs into clear, contextual answers
 - **Session History** — SQLite-backed with caching, per-session context
 - **API Key Auth** — Multi-tier rate limiting (free/pro/enterprise)
 - **Web Dashboard** — Built-in UI at `/api/v1/webui`
+- **Admin Dashboard** — Full analytics, platform status, configuration management
 - **WebSocket Streaming** — Real-time answers via SSE or WebSocket
 
 ## Quick Start
@@ -65,32 +70,46 @@ http://localhost:8080/obs/overlay
 
 ```
 src/
-├── config.py           # Central config + .env auto-loading
-├── orchestrator.py     # AI coordinator — ties all scanners together
+├── config.py              # Central config + .env auto-loading
+├── orchestrator.py        # AI coordinator — ties all scanners together
 ├── voice/
-│   ├── audio_capture.py   # Mic/stream audio capture
-│   └── speech_to_text.py  # Whisper/OpenAI/Google STT
+│   ├── audio_capture.py      # Mic/stream audio capture
+│   └── speech_to_text.py     # Whisper/OpenAI/Google STT
 ├── gameplay/
-│   ├── screen_capture.py  # DXcam/MSS/PIL screen grab
-│   └── vision_analyzer.py # GPT-4o/Claude/Ollama vision
+│   ├── screen_capture.py     # DXcam/MSS/PIL screen grab
+│   └── vision_analyzer.py    # GPT-4o/Claude/Ollama vision
 ├── web/
-│   ├── search_engine.py   # Google/Bing/SearXNG search
-│   ├── reddit_scraper.py  # Reddit tip scraping
-│   └── wiki_scraper.py    # Fextralife/Fandom/IGN wikis
+│   ├── search_engine.py      # Google/Bing/SearXNG search
+│   ├── reddit_scraper.py     # Reddit tip scraping
+│   ├── wiki_scraper.py       # Fextralife/Fandom/IGN wikis
+│   └── youtube_transcript.py # YouTube guide search + transcripts
+├── strategy/               # NEW in v2.3
+│   ├── swarm.py              # Strategy swarm intelligence engine
+│   └── strategies.py         # 30+ boss strategies, 7 agents, genre tips
+├── notifications/          # NEW in v2.3
+│   └── webhook.py            # Discord/Slack/generic webhook sender
+├── i18n/                   # Enhanced in v2.3
+│   └── lang.py               # Multi-language detection (8 languages)
 ├── twitch/
-│   └── stream_integration.py  # Twitch EventSub + chat monitor
+│   └── stream_integration.py # Twitch EventSub + chat monitor
+├── youtube/
+│   └── integration.py        # YouTube live chat monitor
+├── discord_bot/
+│   └── bot.py                # Discord bot integration
 ├── obs/
-│   ├── overlay.html      # OBS browser source overlay
-│   └── overlay_server.py # Overlay serving
+│   ├── overlay.html          # OBS browser source overlay
+│   └── overlay_server.py     # Overlay serving
+├── analytics/
+│   └── analytics.py          # Query analytics + hourly rollups
 ├── database/
-│   ├── db.py             # SQLite async DB + caching
-│   └── models.py         # Schema
+│   ├── db.py                 # SQLite async DB + caching
+│   └── models.py             # Schema + webhooks/strategies tables
 ├── api/
-│   ├── server.py         # FastAPI server
-│   ├── routes.py         # REST + WebSocket + Web UI
-│   └── middleware.py      # Auth + rate limiting + logging
-├── main.py              # Entry point (CLI + API)
-└── tests/               # Pytest suite
+│   ├── server.py             # FastAPI server
+│   ├── routes.py             # REST + WebSocket + Web UI + Strategy API
+│   └── middleware.py          # Auth + rate limiting + logging
+├── main.py                 # Entry point (CLI + API)
+└── tests/                  # Pytest suite
 ```
 
 ## Tiers

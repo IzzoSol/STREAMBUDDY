@@ -103,5 +103,52 @@ CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_game_context_session ON game_context(session_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_hour ON analytics_hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_analytics_date ON analytics_daily(date);
+CREATE TABLE IF NOT EXISTS strategy_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    boss TEXT NOT NULL,
+    game TEXT DEFAULT '',
+    swarm_result TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    access_count INTEGER DEFAULT 0,
+    UNIQUE(boss, game)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_id INTEGER,
+    agent_name TEXT NOT NULL,
+    vote TEXT NOT NULL,
+    confidence REAL DEFAULT 0.0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (strategy_id) REFERENCES strategy_cache(id)
+);
+
+CREATE TABLE IF NOT EXISTS notifications_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    message TEXT DEFAULT '',
+    success INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS language_prefs (
+    session_id TEXT PRIMARY KEY,
+    language TEXT DEFAULT 'en',
+    auto_detect INTEGER DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    url TEXT NOT NULL,
+    provider TEXT DEFAULT 'generic',
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_read ON alerts(is_read);
+CREATE INDEX IF NOT EXISTS idx_strategy_boss ON strategy_cache(boss, game);
+CREATE INDEX IF NOT EXISTS idx_notifications_channel ON notifications_log(channel);

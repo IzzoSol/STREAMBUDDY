@@ -17,4 +17,5 @@ aiosqlite
 python-dotenv>=1.0.0
 discord.py>=2.4.0
 google-api-python-client>=2.120.0
+youtube_transcript_api>=0.6.0
 # whisper on-demand only: pip install openai-whisper

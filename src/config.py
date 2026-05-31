@@ -120,6 +120,20 @@ class OBSConfig:
 
 
 @dataclass
+class WebhookConfig:
+    discord_url: str = ""
+    slack_url: str = ""
+    enabled: bool = False
+
+
+@dataclass
+class StrategyConfig:
+    enabled: bool = True
+    swarm_enabled: bool = True
+    youtube_guide_search: bool = True
+
+
+@dataclass
 class APIConfig:
     host: str = "0.0.0.0"
     port: int = 8080
@@ -167,6 +181,8 @@ class AppConfig:
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
     discord: DiscordConfig = field(default_factory=DiscordConfig)
     obs: OBSConfig = field(default_factory=OBSConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
     api: APIConfig = field(default_factory=APIConfig)
 
 
@@ -204,6 +220,14 @@ def load_config_from_env() -> AppConfig:
 
     cfg.discord.enabled = os.getenv("DISCORD_ENABLED", "false").lower() == "true"
     cfg.discord.token = os.getenv("DISCORD_TOKEN")
+
+    cfg.webhook.discord_url = os.getenv("DISCORD_WEBHOOK_URL", "")
+    cfg.webhook.slack_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    cfg.webhook.enabled = os.getenv("WEBHOOK_ENABLED", "false").lower() == "true"
+
+    cfg.strategy.enabled = os.getenv("STRATEGY_ENABLED", "true").lower() == "true"
+    cfg.strategy.swarm_enabled = os.getenv("SWARM_ENABLED", "true").lower() == "true"
+    cfg.strategy.youtube_guide_search = os.getenv("YOUTUBE_GUIDE_SEARCH", "true").lower() == "true"
 
     cfg.api.host = os.getenv("API_HOST", "0.0.0.0")
     cfg.api.port = int(os.getenv("API_PORT", "8080"))
